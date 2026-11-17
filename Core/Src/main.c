@@ -18,13 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +62,46 @@ int __io_putchar(int ch){
 	return 0;
 }
 
+// status = 0: x axis; status = 1: y axis; status = 2: z axis
+uint8_t sensor_read(int status){
+	uint8_t returnValue;
+	uint8_t axis_register;
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+	uint8_t spiCommand = 0x0A;
+	HAL_SPI_Transmit(&hspi2, (const uint8_t*) &spiCommand, 1, 10);
+	switch(status){
+		case 0:
+			axis_register = 0x0E;
+			break;
+		case 1:
+			axis_register = 0x0F;
+			break;
+		case 2:
+			axis_register = 0x10;
+			break;
+		case 3:
+			axis_register = 0x11;
+			break;
+		case 4:
+			axis_register = 0x12;
+			break;
+		case 5:
+			axis_register = 0x13;
+			break;
+		default:
+			axis_register = 0x00;
+			break;
+	}
+	HAL_SPI_Transmit(&hspi2, (const uint8_t*) &axis_register, 1, 10);
+	HAL_SPI_Receive(&hspi2, &returnValue, 1, 10);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+	return returnValue;
+}
+
+float convert_to_SI(int16_t register_data){
+	return register_data * 0.001f * 9.8;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -94,8 +134,9 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-
+  printf("Hello, World\r\n");
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN BSP */
@@ -106,14 +147,23 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+	  HAL_Delay(500);
+	  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+	  HAL_Delay(500);
 
+	  uint8_t x_acceleration_l = sensor_read(0);
+	  uint8_t x_acceleration_h = sensor_read(1);
+	  uint8_t y_acceleration_l = sensor_read(2);
+	  uint8_t y_acceleration_h = sensor_read(3);
+	  uint8_t z_acceleration_l = sensor_read(4);
+	  uint8_t z_acceleration_h = sensor_read(5);
+	  float x_acceleration = convert_to_SI((x_acceleration_h << 8) | x_acceleration_l);
+	  float y_acceleration = convert_to_SI((y_acceleration_h << 8) | y_acceleration_l);
+	  float z_acceleration = convert_to_SI((z_acceleration_h << 8) | z_acceleration_l);
+	  printf("x_acceleration: %f, y_acceleration: %f, z_acceleration: %f\r\n", x_acceleration, y_acceleration, z_acceleration);
     /* USER CODE END WHILE */
-	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-	HAL_Delay(500);
-	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-	HAL_Delay(500);
 
-	printf("Hello, World\r\n");
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
