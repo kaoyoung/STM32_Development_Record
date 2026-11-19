@@ -58,47 +58,78 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 int __io_putchar(int ch){
-	HAL_UART_Transmit(&huart2, (uint8_t*)ch, 1, HAL_MAX_DELAY);
+	HAL_UART_Transmit(&huart2, (uint8_t*)&ch, 1, HAL_MAX_DELAY);
 	return 0;
 }
 
-// status = 0: x axis; status = 1: y axis; status = 2: z axis
-uint8_t sensor_read(int status){
-	uint8_t returnValue;
+void ADXL362_WakeUp(){
+	uint8_t writeInfo[3] = {0x0A, 0x2D, 0x02};
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi2, writeInfo, 3, 10);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+}
+
+// status: 0: x axis; 1: y axis; 2: z axis
+uint16_t sensor_read(int status){
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	uint8_t spiCommand = 0x0B;
+	HAL_SPI_Transmit(&hspi2, &spiCommand, 1, 10);
+
 	uint8_t axis_register;
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-	uint8_t spiCommand = 0x0A;
-	HAL_SPI_Transmit(&hspi2, (const uint8_t*) &spiCommand, 1, 10);
 	switch(status){
 		case 0:
 			axis_register = 0x0E;
 			break;
 		case 1:
-			axis_register = 0x0F;
-			break;
-		case 2:
 			axis_register = 0x10;
 			break;
-		case 3:
-			axis_register = 0x11;
-			break;
-		case 4:
+		case 2:
 			axis_register = 0x12;
-			break;
-		case 5:
-			axis_register = 0x13;
 			break;
 		default:
 			axis_register = 0x00;
 			break;
 	}
-	HAL_SPI_Transmit(&hspi2, (const uint8_t*) &axis_register, 1, 10);
-	HAL_SPI_Receive(&hspi2, &returnValue, 1, 10);
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+	HAL_SPI_Transmit(&hspi2, &axis_register, 1, 10);
+	uint8_t axis_raw[2];
+	HAL_SPI_Receive(&hspi2, axis_raw, 2, 10);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+
+	uint16_t returnValue = axis_raw[0] | (axis_raw[1] << 8);
+	printf("return value is: %04X\r\n", returnValue);
 	return returnValue;
 }
 
+uint8_t read_reg(uint8_t addr){
+	uint8_t cmd = 0x0B;
+	uint8_t returnValue = 0x5A;   // 刻意給一個特別的初始值
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi2, &cmd, 1, 10);
+	HAL_SPI_Transmit(&hspi2, &addr, 1, 10);
+	HAL_SPI_Receive(&hspi2, &returnValue, 1, 10);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+	return returnValue;
+}
+
+
+uint8_t get_sensor_IDRegister(){
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+	uint8_t spiCommand = 0x0B;
+	uint8_t register_addr = 0x00;
+	uint8_t returnValue;
+	HAL_StatusTypeDef s1, s2, s3;
+
+	s1 = HAL_SPI_Transmit(&hspi2, (const uint8_t*) &spiCommand, 1, 10);
+	s2 = HAL_SPI_Transmit(&hspi2, (const uint8_t*) &register_addr, 1, 10);
+	s3 = HAL_SPI_Receive(&hspi2, &returnValue, 1, 10);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+	return returnValue;
+}
+
+
+
 float convert_to_SI(int16_t register_data){
+	printf("current value is: %d\r\n", register_data);
 	return register_data * 0.001f * 9.8;
 }
 
@@ -137,6 +168,38 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
   printf("Hello, World\r\n");
+  HAL_Delay(100);
+  printf("ID = 0x%02X\r\n", get_sensor_IDRegister());
+  // printf("get_sensor_IDRegister() is: %d\r\n", get_sensor_IDRegister());
+  if(get_sensor_IDRegister() == 0xAD){
+	  printf("ADXL is connected\r\n");
+  }
+  else{
+	  printf("ADXL is not connected\r\n");
+  }
+  HAL_Delay(10);
+  for (int i = 0; i < 3; i++) {
+  	printf("0x00 = 0x%02X  0x01 = 0x%02X  0x02 = 0x%02X\r\n",
+  	       read_reg(0x00), read_reg(0x01), read_reg(0x02));
+  	HAL_Delay(100);
+  }
+
+  /*
+  uint8_t tx = 0xA5, rx = 0;
+  HAL_SPI_TransmitReceive(&hspi2, &tx, &rx, 1, 10);
+  printf("loopback: got 0x%02X\r\n", rx);
+
+  HAL_Delay(10);
+  printf("0x00 = 0x%02X (expect 0xAD)\r\n", read_reg(0x00));
+  printf("0x01 = 0x%02X (expect 0x1D)\r\n", read_reg(0x01));
+  printf("0x02 = 0x%02X (expect 0xF2)\r\n", read_reg(0x02));
+  read_reg(0x00);   // 先讓 SPI 啟動一次
+  while (1) {       // 暫時的測試迴圈，測完刪掉
+  	printf("A0 = %d\r\n", HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0));
+  	HAL_Delay(500);
+  }
+	*/
+
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN BSP */
@@ -145,23 +208,23 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  ADXL362_WakeUp();
   while (1)
   {
+
 	  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 	  HAL_Delay(500);
 	  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
 	  HAL_Delay(500);
 
-	  uint8_t x_acceleration_l = sensor_read(0);
-	  uint8_t x_acceleration_h = sensor_read(1);
-	  uint8_t y_acceleration_l = sensor_read(2);
-	  uint8_t y_acceleration_h = sensor_read(3);
-	  uint8_t z_acceleration_l = sensor_read(4);
-	  uint8_t z_acceleration_h = sensor_read(5);
-	  float x_acceleration = convert_to_SI((x_acceleration_h << 8) | x_acceleration_l);
-	  float y_acceleration = convert_to_SI((y_acceleration_h << 8) | y_acceleration_l);
-	  float z_acceleration = convert_to_SI((z_acceleration_h << 8) | z_acceleration_l);
-	  printf("x_acceleration: %f, y_acceleration: %f, z_acceleration: %f\r\n", x_acceleration, y_acceleration, z_acceleration);
+	  uint16_t x_acceleration_raw = sensor_read(0);
+	  uint16_t y_acceleration_raw = sensor_read(1);
+	  uint16_t z_acceleration_raw = sensor_read(2);
+	  float x_acceleration_si = convert_to_SI(x_acceleration_raw);
+	  float y_acceleration_si = convert_to_SI(y_acceleration_raw);
+	  float z_acceleration_si = convert_to_SI(z_acceleration_raw);
+	  printf("x_acceleration: %f, y_acceleration: %f, z_acceleration: %f\r\n", x_acceleration_si, y_acceleration_si, z_acceleration_si);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
